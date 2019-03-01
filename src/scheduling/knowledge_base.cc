@@ -88,6 +88,7 @@ KnowledgeBase::~KnowledgeBase() {
 }
 
 void KnowledgeBase::AddMachineSample(const ResourceStats& sample) {
+  LOG(INFO) << "DEBUG: Inside AddMachineSample, adding machine sample";
   boost::lock_guard<boost::upgrade_mutex> lock(kb_lock_);
   ResourceID_t rid = ResourceIDFromString(sample.resource_id());
   // Check if we already have a record for this machine

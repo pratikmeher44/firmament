@@ -148,6 +148,10 @@ FlowScheduler::FlowScheduler(
       cost_model_ = new NetCostModel(resource_map, task_map, knowledge_base);
       VLOG(1) << "Using the net cost model";
       break;
+    case CostModelType::COST_MODEL_CPU:
+      cost_model_ = new CpuCostModel(resource_map, /*job_map,*/ task_map, knowledge_base);
+      VLOG(1) << "Using the cpu cost model";
+      break;
     case CostModelType::COST_MODEL_QUINCY_INTERFERENCE:
       cost_model_ =
         new QuincyInterferenceCostModel(resource_map, job_map, task_map,
@@ -182,7 +186,8 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
     const vector<SchedulingDelta*>& deltas) {
   uint64_t num_scheduled = 0;
   // Perform the necessary actions to apply the scheduling changes.
-  VLOG(2) << "Applying " << deltas.size() << " scheduling deltas...";
+  //VLOG(2) << "Applying " << deltas.size() << " scheduling deltas...";
+  LOG(INFO) << "Applying " << deltas.size() << " scheduling deltas...";
   for (auto& delta : deltas) {
     VLOG(2) << "Processing delta of type " << delta->type();
     ResourceID_t res_id = ResourceIDFromString(delta->resource_id());
@@ -190,6 +195,10 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
     ResourceStatus* rs = FindPtrOrNull(*resource_map_, res_id);
     CHECK_NOTNULL(td_ptr);
     CHECK_NOTNULL(rs);
+
+    //resource stats simulation
+    ResourceStats resource_stats;
+    CpuStats* cpu_stats = resource_stats.add_cpus_stats();
     if (delta->type() == SchedulingDelta::NOOP) {
       // We should not get any NOOP deltas as they get filtered before.
       continue;
@@ -199,16 +208,38 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
         FindOrNull(*job_map_, JobIDFromString(td_ptr->job_id()));
       if (jd->state() != JobDescriptor::RUNNING)
         jd->set_state(JobDescriptor::RUNNING);
+      bool have_sample =
+        knowledge_base_->GetLatestStatsForMachine(ResourceIDFromString(rs->mutable_topology_node()->parent_id()), &resource_stats);
+      if(have_sample) {
+            cpu_stats->set_cpu_allocatable(cpu_stats->cpu_allocatable() - td_ptr->resource_request().cpu_cores());
+            resource_stats.set_mem_allocatable(resource_stats.mem_allocatable() - td_ptr->resource_request().ram_cap());
+            LOG(INFO) << "DEBUG: PLACEMENT While applying scheduling deltas after iteration: \n"
+                      << "CPU CAP: " << cpu_stats->cpu_capacity() << ", " << "CPU ALLOC: " << cpu_stats->cpu_allocatable() << "\n"
+                      << "MEM CAP: " << resource_stats.mem_capacity() << ", " << "MEM ALLOC: " << resource_stats.mem_allocatable();
+            knowledge_base_->AddMachineSample(resource_stats);
+      }
       HandleTaskPlacement(td_ptr, rs->mutable_descriptor());
       num_scheduled++;
     } else if (delta->type() == SchedulingDelta::PREEMPT) {
-      HandleTaskEviction(td_ptr, rs->mutable_descriptor());
+      bool have_sample =
+        knowledge_base_->GetLatestStatsForMachine(ResourceIDFromString(rs->mutable_topology_node()->parent_id()), &resource_stats);
+      if(have_sample) {
+            cpu_stats->set_cpu_allocatable(cpu_stats->cpu_allocatable() + td_ptr->resource_request().cpu_cores());
+            resource_stats.set_mem_allocatable(resource_stats.mem_allocatable() + td_ptr->resource_request().ram_cap());
+            LOG(INFO) << "DEBUG: PREEMPT While applying scheduling deltas after iteration: \n"
+                      << "CPU CAP: " << cpu_stats->cpu_capacity() << ", " << "CPU ALLOC: " << cpu_stats->cpu_allocatable() << "\n"
+                      << "MEM CAP: " << resource_stats.mem_capacity() << ", " << "MEM ALLOC: " << resource_stats.mem_allocatable();
+            knowledge_base_->AddMachineSample(resource_stats);
+      }
+    //HandleTaskEviction(td_ptr, rs->mutable_descriptor());
+      HandleTaskRemoval(td_ptr);
     } else if (delta->type() == SchedulingDelta::MIGRATE) {
       HandleTaskMigration(td_ptr, rs->mutable_descriptor());
     } else {
       LOG(FATAL) << "Unhandled scheduling delta case";
     }
   }
+  LOG(INFO) << "Returning " << num_scheduled << " scheduling deltas...";
   return num_scheduled;
 }
 
@@ -341,6 +372,7 @@ void FlowScheduler::HandleTaskPlacement(TaskDescriptor* td_ptr,
 
 void FlowScheduler::HandleTaskRemoval(TaskDescriptor* td_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
+  LOG(INFO) << "FlowScheduler::HandleTaskRemoval >>>>";
   flow_graph_manager_->TaskRemoved(td_ptr->uid());
   EventDrivenScheduler::HandleTaskRemoval(td_ptr);
 }
@@ -391,6 +423,7 @@ uint64_t FlowScheduler::ScheduleAllJobs(SchedulerStats* scheduler_stats,
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   vector<JobDescriptor*> jobs;
   for (auto& job_id_jd : jobs_to_schedule_) {
+    LOG(INFO) << "Runnable tasks for this job is : " << ComputeRunnableTasksForJob(job_id_jd.second).size();
     if (ComputeRunnableTasksForJob(job_id_jd.second).size() > 0) {
       jobs.push_back(job_id_jd.second);
     }
@@ -417,14 +450,29 @@ uint64_t FlowScheduler::ScheduleJobs(const vector<JobDescriptor*>& jd_ptr_vect,
   uint64_t num_scheduled_tasks = 0;
   boost::timer::cpu_timer total_scheduler_timer;
   vector<JobDescriptor*> jds_with_runnables;
+  unordered_set<TaskID_t> runnable_tasks;
   for (auto& jd_ptr : jd_ptr_vect) {
     // Check if we have any runnable tasks in this job
-    const unordered_set<TaskID_t> runnable_tasks =
-      ComputeRunnableTasksForJob(jd_ptr);
+    runnable_tasks = ComputeRunnableTasksForJob(jd_ptr);
+    LOG(INFO) << "Inside ScheduleJobs, runnable tasks for this jd is : " << runnable_tasks.size();
     if (runnable_tasks.size() > 0) {
       jds_with_runnables.push_back(jd_ptr);
     }
   }
+  cost_model_->pending_low_priority_tasks.clear();
+  cost_model_->pending_high_priority_tasks.clear();
+  // Jagadish added this code for filling the pending tasks,
+  // which are unscheduled or recently submitted
+  for(auto& task : runnable_tasks) {
+    TaskDescriptor* td = FindPtrOrNull(*task_map_, task);
+    CHECK_NOTNULL(td);
+    if( td->priority() >= 100 )
+      cost_model_->pending_low_priority_tasks.insert(task);
+    else
+      cost_model_->pending_high_priority_tasks.insert(task);
+  }
+  // DEBUG: Jagadish added this to update machine stats for every scheduling round.
+  // UpdateCostModelResourceStats();
   // XXX(ionel): HACK! We should only run the scheduler when we have
   // runnable jobs. However, we also run the scheduler when we've
   // set the flowlessly_flip_algorithms flag in order to speed up
@@ -493,7 +541,8 @@ uint64_t FlowScheduler::RunSchedulingIteration(
     }
     // This will re-visit all jobs and update their time-dependent costs
     VLOG(1) << "Flow scheduler updating time-dependent costs.";
-    flow_graph_manager_->UpdateTimeDependentCosts(job_vec);
+    LOG(INFO) << "DEBUG: Jagadish commented UpdateTimeDependentCosts(), please uncomment it.";
+    //flow_graph_manager_->UpdateTimeDependentCosts(job_vec);
     last_updated_time_dependent_costs_ = cur_time;
   }
   if (solver_run_cnt_ % FLAGS_purge_unconnected_ec_frequency == 0) {
@@ -551,13 +600,15 @@ uint64_t FlowScheduler::RunSchedulingIteration(
   flow_graph_manager_->SchedulingDeltasForPreemptedTasks(*task_mappings,
                                                          resource_map_,
                                                          &deltas);
+  LOG(INFO) << "Deltas after SchedulingDeltasForPreemptedTasks : " << deltas.size();
+  LOG(INFO) << "Task mappings after SchedulingDeltasForPreemptedTasks : " << task_mappings->size();
   for (it = task_mappings->begin(); it != task_mappings->end(); it++) {
     if (tasks_completed_during_solver_run_.find(it->first) !=
         tasks_completed_during_solver_run_.end()) {
       // Ignore the task because it has already completed while the solver
       // was running.
-      VLOG(1) << "Task with node id: " << it->first
-              << " completed while the solver was running";
+      //VLOG(1) << "Task with node id: " << it->first
+      //        << " completed while the solver was running";
       continue;
     }
     if (pus_removed_during_solver_run_.find(it->second) !=
@@ -574,6 +625,7 @@ uint64_t FlowScheduler::RunSchedulingIteration(
                                                        &task_bindings_,
                                                        &deltas);
   }
+  LOG(INFO) << "Deltas after after loop of NodeBinding: " << deltas.size();
   // Freeing the mappings because they're not used below.
   delete task_mappings;
 

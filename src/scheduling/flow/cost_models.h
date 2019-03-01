@@ -28,6 +28,7 @@
 // Concrete cost models
 #include "scheduling/flow/coco_cost_model.h"
 #include "scheduling/flow/net_cost_model.h"
+#include "scheduling/flow/cpu_cost_model.h"
 #include "scheduling/flow/octopus_cost_model.h"
 #include "scheduling/flow/quincy_cost_model.h"
 #include "scheduling/flow/quincy_interference_cost_model.h"

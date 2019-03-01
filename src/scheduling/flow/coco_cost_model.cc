@@ -473,6 +473,8 @@ vector<ResourceID_t>* CocoCostModel::GetOutgoingEquivClassPrefArcs(
             // stop exploring the subtree.
             VLOG(2) << "Tasks in EC " << ec << " do fit into resources below "
                     << res_node_desc->resource_desc().uuid();
+            LOG(INFO) << "DEBUG: Tasks in EC " << ec << " do fit into resources below "
+                    << res_node_desc->resource_desc().uuid();
             // TODO(malte): This is a bit of a hack, since the question whether
             // a resource reservation is treated as strict should be a per-job
             // or per-task property. At the moment, we always treat it as, but
@@ -510,6 +512,7 @@ vector<ResourceID_t>* CocoCostModel::GetOutgoingEquivClassPrefArcs(
       }
     }
   }
+  LOG(INFO) << "DEBUG: No. of preferred resources from TEC: " << prefered_res->size();
   return prefered_res;
 }
 
@@ -546,6 +549,7 @@ ArcDescriptor CocoCostModel::TaskToUnscheduledAgg(TaskID_t task_id) {
   cost_vector.disk_bw_ = static_cast<uint32_t>(
     omega_ + NormalizeCost(td.resource_request().disk_bw(),
                            min_machine_capacity_.disk_bw()));
+  
   cost_vector.machine_type_score_ = 1;
   cost_vector.interference_score_ = 1;
   cost_vector.locality_score_ = 0;
@@ -594,8 +598,14 @@ ArcDescriptor CocoCostModel::TaskToResourceNode(TaskID_t task_id,
 ArcDescriptor CocoCostModel::ResourceNodeToResourceNode(
     const ResourceDescriptor& source,
     const ResourceDescriptor& destination) {
-  // Get the RD for the machine corresponding to this resource
   ResourceID_t destination_res_id = ResourceIDFromString(destination.uuid());
+  if (destination.type() == ResourceDescriptor::RESOURCE_MACHINE) {
+     LOG(INFO) << "DEBUG: Destination type is RESOURCE_MACHINE, in ResourceNodeToResourceNode";
+  }
+  else if (destination.type() == ResourceDescriptor::RESOURCE_PU)
+     LOG(INFO) << "DEBUG: Destination type is PU , in ResourceNodeToResourceNode";
+  // Get the RD for the machine corresponding to this resource
+ // ResourceID_t destination_res_id = ResourceIDFromString(destination.uuid());
   ResourceStatus* machine_rs =
     FindPtrOrNull(*resource_map_, MachineResIDForResource(destination_res_id));
   CHECK_NOTNULL(machine_rs);
@@ -643,9 +653,13 @@ ArcDescriptor CocoCostModel::ResourceNodeToResourceNode(
     PrintCostVector(cost_vector);
     VLOG(2) << "  Flattened: " << flat_cost;
   }
+
+  
   // Return the flattened vector
   return ArcDescriptor(flat_cost, CapacityFromResNodeToParent(destination),
                        0ULL);
+  // DEBUG:
+  // return ArcDescriptor(0LL, FLAGS_max_tasks_per_pu, 0ULL);
 }
 
 // The cost from the resource leaf to the sink is 0.
@@ -692,8 +706,10 @@ ArcDescriptor CocoCostModel::TaskToEquivClassAggregator(TaskID_t task_id,
     VLOG(2) << "Task " << task_id << "'s cost to EC " << tec << ":";
     PrintCostVector(cost_vector);
     VLOG(2) << "  Flattened: " << FlattenCostVector(cost_vector);
+    LOG(INFO) << "  Flattened: task's cost to EC" << FlattenCostVector(cost_vector);
   }
   // Return the flattened vector
+    //PrintCostVector(cost_vector);
   return ArcDescriptor(FlattenCostVector(cost_vector), 1ULL, 0ULL);
 }
 
@@ -731,9 +747,23 @@ ArcDescriptor CocoCostModel::EquivClassToResourceNode(
         score = rd.coco_interference_scores().devil_penalty() / num_children;
       }
     }
+    /*
+    CostVector_t cost_vector;
+    cost_vector.cpu_cores_ = NormalizeCost(rd.resource_capacity().cpu_cores() -
+                                           rd.available_resources().cpu_cores(), 
+                                           rd.resource_capacity().cpu_cores());
+    cost_vector.ram_cap_ = NormalizeCost(rd.resource_capacity().ram_cap() -
+                                           rd.available_resources().ram_cap(), 
+                                           rd.resource_capacity().ram_cap());
+    
+    Cost_t flat_cost = FlattenCostVector(cost_vector);
+    */
+    auto flat_cost = score;
     VLOG(2) << num_tasks_that_fit << " tasks of TEC " << ec << " fit under "
             << res_id << ", at interference score of " << score;
-    return ArcDescriptor(score, num_tasks_that_fit, 0ULL);
+    
+    LOG(INFO) << "DEBUG: Flattened cost of cpu, memory for resource is : " << flat_cost;
+    return ArcDescriptor(flat_cost, num_tasks_that_fit, 0ULL);
   } else {
     LOG(WARNING) << "Unknown EC " << ec << " is not a TEC, so returning "
                  << "zero cost!";
@@ -797,6 +827,12 @@ string CocoCostModel::ResourceVectorToString(
 void CocoCostModel::AddMachine(ResourceTopologyNodeDescriptor* rtnd_ptr) {
   const ResourceDescriptor& rd = rtnd_ptr->resource_desc();
   const ResourceVector& cap = rd.resource_capacity();
+  LOG(INFO) << "DEBUG: AddMachine cap.cpu_cores():, cap.ram_cap(), cap.net_tx_bw(), "
+	    << "cap.net_rx_bw(), cap.disk_bw(): "
+	    << cap.cpu_cores() << ", " << cap.ram_cap() << ", " << cap.net_tx_bw() << ", "
+	    << cap.net_rx_bw() << ", " << cap.disk_bw() << ", "
+            << "\nDEBUG: Memory availability, CPU availability: " << rd.available_resources().cpu_cores() << ", "
+            << rd.available_resources().ram_cap();
   // Check if this machine's capacity is the maximum in any dimension
   if (cap.cpu_cores() > max_machine_capacity_.cpu_cores())
     max_machine_capacity_.set_cpu_cores(cap.cpu_cores());
@@ -883,6 +919,7 @@ FlowGraphNode* CocoCostModel::GatherStats(FlowGraphNode* accumulator,
   // We're inside the resource topology
   ResourceDescriptor* rd_ptr = accumulator->rd_ptr_;
   CHECK_NOTNULL(rd_ptr);
+  /*
   // Use the KB to find load information and compute available resources
   ResourceID_t machine_res_id =
     MachineResIDForResource(accumulator->resource_id_);
@@ -890,10 +927,10 @@ FlowGraphNode* CocoCostModel::GatherStats(FlowGraphNode* accumulator,
     // Base case: (PU -> SINK). We are at a PU and we gather the statistics.
     CHECK(other->resource_id_.is_nil());
     // Get the RD for the machine
-    /*ResourceStatus* machine_rs_ptr =
+//    ResourceStatus* machine_rs_ptr =
       FindPtrOrNull(*resource_map_, machine_res_id);
-    CHECK_NOTNULL(machine_rs_ptr);
-    ResourceDescriptor* machine_rd_ptr = machine_rs_ptr->mutable_descriptor();*/
+//    CHECK_NOTNULL(machine_rs_ptr);
+//    ResourceDescriptor* machine_rd_ptr = machine_rs_ptr->mutable_descriptor();
     // Grab the latest available resource sample from the machine
     ResourceStats latest_stats;
     // Take the most recent sample for now
@@ -950,18 +987,42 @@ FlowGraphNode* CocoCostModel::GatherStats(FlowGraphNode* accumulator,
         reserved->set_net_rx_bw(reserved->net_rx_bw() +
                                 td.resource_request().net_rx_bw());
       }
+     }
     }
-    return accumulator;
-  } else if (accumulator->type_ == FlowNodeType::MACHINE) {
+    return accumulator; */
+  if (accumulator->type_ == FlowNodeType::MACHINE) {
     // Grab the latest available resource sample from the machine
     ResourceStats latest_stats;
     // Take the most recent sample for now
     bool have_sample =
       knowledge_base_->GetLatestStatsForMachine(accumulator->resource_id_,
                                                 &latest_stats);
+    
     if (have_sample) {
       VLOG(2) << "Updating machine " << accumulator->resource_id_ << "'s "
               << "resource stats!";
+        float available_cpu_cores =
+          latest_stats.cpus_stats(0).cpu_capacity() *
+          (1.0 - latest_stats.cpus_stats(0).cpu_utilization());
+      LOG(INFO) << "DEBUG: Updating machine " << accumulator->resource_id_ << "'s "
+              << "resource stats! available_cpu_cores = " << available_cpu_cores << ", \n"
+              << "available_ram_cap: " << latest_stats.mem_capacity() * (1.0 - latest_stats.mem_utilization());
+      // DEBUG: CPU stats
+      rd_ptr->mutable_available_resources()->set_cpu_cores(
+          available_cpu_cores);
+      rd_ptr->mutable_max_available_resources_below()->set_cpu_cores(
+          available_cpu_cores);
+      rd_ptr->mutable_min_available_resources_below()->set_cpu_cores(
+          available_cpu_cores);
+      // DEBUG: Memory stats
+      rd_ptr->mutable_available_resources()->set_ram_cap(
+          latest_stats.mem_capacity() * (1.0 - latest_stats.mem_utilization()));
+      rd_ptr->mutable_max_available_resources_below()->set_ram_cap(
+          latest_stats.mem_capacity() * (1.0 - latest_stats.mem_utilization()));
+      rd_ptr->mutable_min_available_resources_below()->set_ram_cap(
+          latest_stats.mem_capacity() * (1.0 - latest_stats.mem_utilization())); 
+    
+    /*  
       rd_ptr->mutable_available_resources()->set_disk_bw(
           rd_ptr->resource_capacity().disk_bw() -
           latest_stats.disk_bw());
@@ -989,10 +1050,11 @@ FlowGraphNode* CocoCostModel::GatherStats(FlowGraphNode* accumulator,
       rd_ptr->mutable_min_available_resources_below()->set_net_rx_bw(
           rd_ptr->resource_capacity().net_rx_bw() -
           latest_stats.net_rx_bw());
+   */
     }
   }
   if (accumulator->rd_ptr_ && other->rd_ptr_) {
-    AccumulateResourceStats(accumulator->rd_ptr_, other->rd_ptr_);
+    //AccumulateResourceStats(accumulator->rd_ptr_, other->rd_ptr_);
   }
   return accumulator;
 }
@@ -1085,7 +1147,7 @@ void CocoCostModel::PrepareStats(FlowGraphNode* accumulator) {
   }
   ResourceDescriptor* rd_ptr = accumulator->rd_ptr_;
   CHECK_NOTNULL(rd_ptr);
-  rd_ptr->clear_available_resources();
+  /* rd_ptr->clear_available_resources();  */
   rd_ptr->clear_reserved_resources();
   rd_ptr->clear_min_available_resources_below();
   rd_ptr->clear_max_available_resources_below();
@@ -1104,9 +1166,17 @@ uint64_t CocoCostModel::TaskFitCount(const ResourceVector& req,
     num_tasks = min(num_tasks,
                     static_cast<uint64_t>(avail.cpu_cores() / req.cpu_cores()));
   }
+  LOG(INFO) << "DEBUG: AFter first check: num_tasks" << num_tasks << ", "
+            << "avail.cpu_cores() / req.cpu_cores(): " << avail.cpu_cores() / req.cpu_cores();
   if (req.ram_cap() > 0) {
     num_tasks = min(num_tasks, avail.ram_cap() / req.ram_cap());
   }
+  LOG(INFO) << "DEBUG: AFter second check: num_tasks, avail.ram_cap() / req.ram_cap() " << num_tasks << ", "
+            << avail.ram_cap() / req.ram_cap();
+  LOG(INFO) << "DEBUG: req.cpu_cores(), req.ram_cap() , avail.cpu_cores(), avail.ram_cap()" 
+            << ", " << req.cpu_cores() << ", " << req.ram_cap() << ", " << avail.cpu_cores() << ", "
+            << avail.ram_cap();
+  /*
   if (req.disk_bw() > 0) {
     num_tasks = min(num_tasks, avail.disk_bw() / req.disk_bw());
   }
@@ -1116,6 +1186,8 @@ uint64_t CocoCostModel::TaskFitCount(const ResourceVector& req,
   if (req.net_rx_bw() > 0) {
     num_tasks = min(num_tasks, avail.net_rx_bw() / req.net_rx_bw());
   }
+  */
+  LOG(INFO) << "DEBUG: No. of tasks that can fit: " << num_tasks;
   return num_tasks;
 }
 
@@ -1146,8 +1218,11 @@ CocoCostModel::TaskFitsUnderResourceAggregate(
   if (CompareResourceVectors(*request, unreserved) ==
       RESOURCE_VECTOR_WHOLLY_FITS) {
     // We fit into unreserved space on *all* subordinate resources.
+    LOG(INFO) << "Task fits in unreserved " << res.uuid() << ": "
+          << ResourceVectorToString(unreserved, " / ");
     return TASK_ALWAYS_FITS_IN_UNRESERVED;
   }
+  /*
   if (CompareResourceVectors(*request, res.min_available_resources_below()) ==
       RESOURCE_VECTOR_WHOLLY_FITS) {
     // We fit in available space (but not unreserved space) on *all* subordinate
@@ -1169,7 +1244,7 @@ CocoCostModel::TaskFitsUnderResourceAggregate(
     // We fit in available space (but not unreserved space) on *some*
     // (at least one) subordinate resources.
     return TASK_SOMETIMES_FITS_IN_AVAILABLE;
-  }
+  }*/
   // Otherwise, we don't fit in *any* subordinate resources.
   return TASK_NEVER_FITS;
 }

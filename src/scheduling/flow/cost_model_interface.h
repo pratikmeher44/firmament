@@ -49,6 +49,7 @@ enum CostModelType {
   COST_MODEL_VOID = 7,
   COST_MODEL_NET = 8,
   COST_MODEL_QUINCY_INTERFERENCE = 9,
+  COST_MODEL_CPU = 10,
 };
 
 struct ArcDescriptor {
@@ -220,6 +221,8 @@ class CostModelInterface {
       shared_ptr<FlowGraphManager> flow_graph_manager) {
     flow_graph_manager_ = flow_graph_manager;
   }
+  set<TaskID_t> pending_low_priority_tasks;
+  set<TaskID_t> pending_high_priority_tasks;
 
  protected:
   shared_ptr<FlowGraphManager> flow_graph_manager_;

@@ -113,6 +113,7 @@ class FirmamentSchedulerServiceImpl final :
 
   void HandlePreemptionDelta(const SchedulingDelta& delta)
   {
+    LOG(INFO) << "DEBUG: HandlePreemptionDelta() getting called";
     // TODO(ionel): Implement!
   }
 
@@ -126,6 +127,7 @@ class FirmamentSchedulerServiceImpl final :
                   SchedulingDeltas* reply) override {
     SchedulerStats sstat;
     vector<SchedulingDelta> deltas;
+    LOG(INFO) << "Calling ScheduleAllJobs >>>>";
     scheduler_->ScheduleAllJobs(&sstat, &deltas);
     // Extract results
     if(deltas.size()) {
@@ -154,6 +156,7 @@ class FirmamentSchedulerServiceImpl final :
   Status TaskCompleted(ServerContext* context,
                        const TaskUID* tid_ptr,
                        TaskCompletedResponse* reply) override {
+    LOG(INFO) << "DEBUG: TaskCompleted: " << tid_ptr->task_uid();
     TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, tid_ptr->task_uid());
     if (td_ptr == NULL) {
       reply->set_type(TaskReplyType::TASK_NOT_FOUND);
@@ -187,6 +190,7 @@ class FirmamentSchedulerServiceImpl final :
   Status TaskFailed(ServerContext* context,
                     const TaskUID* tid_ptr,
                     TaskFailedResponse* reply) override {
+    LOG(INFO) << "DEBUG: TaskFailed: " << tid_ptr->task_uid();
     TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, tid_ptr->task_uid());
     if (td_ptr == NULL) {
       reply->set_type(TaskReplyType::TASK_NOT_FOUND);
@@ -201,11 +205,43 @@ class FirmamentSchedulerServiceImpl final :
                      const TaskUID* tid_ptr,
                      TaskRemovedResponse* reply) override {
     boost::lock_guard<boost::recursive_mutex> lock(scheduler_->scheduling_lock_);
+    LOG(INFO) << "DEBUG: TaskRemoved: " << tid_ptr->task_uid();
     TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, tid_ptr->task_uid());
     if (td_ptr == NULL) {
       reply->set_type(TaskReplyType::TASK_NOT_FOUND);
       return Status::OK;
     }
+    //If the task to remove is a root task then swap it with the
+    //first spawned task.
+/*    if ((td_ptr == jd_ptr->mutable_root_task()) && (td_ptr->spawned_size() > 0)) {
+      LOG(INFO) << "spawned_size = " << td_ptr->spawned_size();
+      LOG(INFO) << "Task is Root Task! td_id = " << td_ptr->uid();
+      int index = 0;
+      TaskDescriptor* td_spawned_ptr = td_ptr->mutable_spawned(0)->add_spawned();
+      td_spawned_ptr->CopyFrom(jd_ptr->root_task());
+      index++;
+      while (index < td_ptr->spawned_size()) {
+        td_spawned_ptr = td_ptr->mutable_spawned(0)->add_spawned();
+        td_spawned_ptr->CopyFrom(td_ptr->spawned(index));
+        index++;
+      }
+      index = 0;
+      while (index < td_ptr->spawned_size()) {
+        LOG(INFO) << "spawned task uid = " << td_ptr->mutable_spawned(index)->uid();
+        index++;
+      }
+      td_ptr->Swap(td_ptr->mutable_spawned(0));
+      index = 0;
+      while (index < td_ptr->spawned_size()) {
+        LOG(INFO) << "spawned task uid = " << td_ptr->mutable_spawned(index)->uid();
+        index++;
+      }
+      LOG(INFO) << "spawned_size = " << td_ptr->spawned_size();
+      jd_ptr->set_allocated_root_task(td_ptr);
+      td_ptr = td_ptr->mutable_spawned(0);
+      LOG(INFO) << "After Swap: td_id = " << td_ptr->uid() << "  td_id_root = " << jd_ptr->mutable_root_task()->uid();
+    }
+*/
     scheduler_->HandleTaskRemoval(td_ptr);
     JobID_t job_id = JobIDFromString(td_ptr->job_id());
     JobDescriptor* jd_ptr = FindOrNull(*job_map_, job_id);
@@ -230,7 +266,19 @@ class FirmamentSchedulerServiceImpl final :
       job_map_->erase(job_id);
       job_num_incomplete_tasks_.erase(job_id);
       job_num_tasks_to_remove_.erase(job_id);
+
     }
+    //Removing the child task from spawned list
+    /*if (td_ptr != jd_ptr->mutable_root_task()) {
+      for (RepeatedPtrField<TaskDescriptor>::const_iterator
+               task_iter = jd_ptr->mutable_root_task()->mutable_spawned()->begin();
+             task_iter != jd_ptr->mutable_root_task()->mutable_spawned()->end();
+             ++task_iter) {
+        if (task_iter->uid() == td_ptr->uid()) {
+                jd_ptr->mutable_root_task()->mutable_spawned()->erase(task_iter);
+        }
+      }
+    }*/
     reply->set_type(TaskReplyType::TASK_REMOVED_OK);
     return Status::OK;
   }
@@ -240,6 +288,7 @@ class FirmamentSchedulerServiceImpl final :
                        TaskSubmittedResponse* reply) override {
     boost::lock_guard<boost::recursive_mutex> lock(scheduler_->scheduling_lock_);
     TaskID_t task_id = task_desc_ptr->task_descriptor().uid();
+    LOG(INFO) << "DEBUG: TaskSubmitted: " << task_id;
     if (FindPtrOrNull(*task_map_, task_id)) {
       reply->set_type(TaskReplyType::TASK_ALREADY_SUBMITTED);
       return Status::OK;
@@ -277,8 +326,11 @@ class FirmamentSchedulerServiceImpl final :
     uint64_t* num_tasks_to_remove =
       FindOrNull(job_num_tasks_to_remove_, job_id);
     (*num_tasks_to_remove)++;
-    if( (*num_tasks_to_remove) >= 3800 )
-	LOG(INFO) << "All tasks are submitted" << job_id << ", " << 3800 ;
+    if( (*num_tasks_to_remove) >= 19000 )
+    {
+	auto no_of_spawned = jd_ptr->mutable_root_task()->spawned_size();
+	LOG(INFO) << "All tasks are submitted: " << job_id << ", No of sawned : " << no_of_spawned << ", " << 3800;
+    }
     reply->set_type(TaskReplyType::TASK_SUBMITTED_OK);
     return Status::OK;
   }
@@ -287,6 +339,7 @@ class FirmamentSchedulerServiceImpl final :
                      const TaskDescription* task_desc_ptr,
                      TaskUpdatedResponse* reply) override {
     TaskID_t task_id = task_desc_ptr->task_descriptor().uid();
+    LOG(INFO) << "DEBUG: TaskUpdated: " << task_id;
     TaskDescriptor* td_ptr = FindPtrOrNull(*task_map_, task_id);
     if (td_ptr == NULL) {
       reply->set_type(TaskReplyType::TASK_NOT_FOUND);
@@ -353,6 +406,35 @@ class FirmamentSchedulerServiceImpl final :
     // it such that Firmament does not mandatorily create an executor.
     scheduler_->RegisterResource(rtnd_ptr, false, true);
     reply->set_type(NodeReplyType::NODE_ADDED_OK);
+
+    //Add Node initial status simulation
+    ResourceStats resource_stats;
+    ResourceID_t res_id = ResourceIDFromString(rtnd_ptr->resource_desc().uuid());
+    ResourceStatus* rs_ptr = FindPtrOrNull(*resource_map_, res_id);
+    if (rs_ptr == NULL || rs_ptr->mutable_descriptor() == NULL) {
+      reply->set_type(NodeReplyType::NODE_NOT_FOUND);
+      return Status::OK;
+    }
+    resource_stats.set_resource_id(rtnd_ptr->resource_desc().uuid());
+    resource_stats.set_timestamp(0);
+    CpuStats* cpu_stats = resource_stats.add_cpus_stats();
+    cpu_stats->set_cpu_capacity(rtnd_ptr->resource_desc().resource_capacity().cpu_cores());
+    cpu_stats->set_cpu_allocatable(rtnd_ptr->resource_desc().resource_capacity().cpu_cores()*0.80);
+    //resource_stats.cpus_stats(0).set_cpu_utilization(0.0);
+    //resource_stats.cpus_stats(0).set_cpu_reservation(0.0);
+    resource_stats.set_mem_allocatable(rtnd_ptr->resource_desc().resource_capacity().ram_cap());
+    resource_stats.set_mem_capacity(rtnd_ptr->resource_desc().resource_capacity().ram_cap()*0.80);
+    //resource_stats.set_mem_utilization(0.0);
+    //resource_stats.set_mem_reservation(0.0);
+    resource_stats.set_disk_bw(0);
+    resource_stats.set_net_rx_bw(0);
+    resource_stats.set_net_tx_bw(0);
+    LOG(INFO) << "DEBUG: During node additions: CPU CAP: " << cpu_stats->cpu_capacity() << "\n"
+              << "                              CPU ALLOC: " << cpu_stats->cpu_allocatable() << "\n"
+              << "                              MEM CAP: " << resource_stats.mem_capacity() << "\n"
+              << "                              MEM ALLOC: " << resource_stats.mem_allocatable();
+    knowledge_base_->AddMachineSample(resource_stats);
+
     return Status::OK;
   }
 
@@ -436,6 +518,7 @@ class FirmamentSchedulerServiceImpl final :
       reply->set_type(NodeReplyType::NODE_NOT_FOUND);
       return Status::OK;
     }
+    LOG(INFO) << "DEBUG: Adding machine sample from recived node stats";
     knowledge_base_->AddMachineSample(*resource_stats);
     return Status::OK;
   }

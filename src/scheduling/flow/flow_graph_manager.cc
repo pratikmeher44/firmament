@@ -43,8 +43,8 @@
 #include "scheduling/flow/dimacs_change_arc.h"
 #include "scheduling/flow/dimacs_new_arc.h"
 #include "scheduling/flow/dimacs_remove_node.h"
-
-DEFINE_bool(preemption, false, "Enable preemption and migration of tasks");
+// Jagadish modified below line to enable preemption.
+DEFINE_bool(preemption, true, "Enable preemption and migration of tasks");
 DEFINE_bool(update_preferences_running_task, false,
             "True if the preferences of a running task should be updated before"
             " each scheduling round");
@@ -333,6 +333,8 @@ void FlowGraphManager::SchedulingDeltasForPreemptedTasks(
         // preempted.
         VLOG(2) << "PREEMPTION: take " << task_id << " off "
                 << res_id_status.first;
+        //LOG(INFO) << "DEBUG: Task doesn't exist in the mappings=> the task has been preempted.:"
+        //          << task_id;
         SchedulingDelta* preempt_delta = new SchedulingDelta;
         preempt_delta->set_type(SchedulingDelta::PREEMPT);
         preempt_delta->set_task_id(task_id);
@@ -435,6 +437,7 @@ void FlowGraphManager::PinTaskToNode(FlowGraphNode* task_node,
   if (!added_running_arc) {
     // TODO(ionel): Task pinning should be handled from cost models. They
     // should return min_flow_ = 1
+    LOG(INFO) << "DEBUG: Task pinning is being done";
     ArcDescriptor arc_descriptor =
       cost_model_->TaskContinuation(task_node->td_ptr_->uid());
     uint64_t low_bound_capacity = 1;
@@ -602,10 +605,12 @@ uint64_t FlowGraphManager::RemoveTaskNode(FlowGraphNode* task_node) {
 
 void FlowGraphManager::RemoveUnscheduledAggNode(JobID_t job_id) {
   FlowGraphNode* unsched_agg_node = UnschedAggNodeForJobID(job_id);
-  CHECK_NOTNULL(unsched_agg_node);
-  CHECK_EQ(job_unsched_to_node_.erase(job_id), 1);
-  graph_change_manager_->DeleteNode(unsched_agg_node, DEL_UNSCHED_JOB_NODE,
+  if(unsched_agg_node) {
+    //CHECK_NOTNULL(unsched_agg_node);
+    CHECK_EQ(job_unsched_to_node_.erase(job_id), 1);
+    graph_change_manager_->DeleteNode(unsched_agg_node, DEL_UNSCHED_JOB_NODE,
                                     "RemoveUnscheduledAggNode");
+  }
 }
 
 uint64_t FlowGraphManager::TaskCompleted(TaskID_t task_id) {
@@ -667,6 +672,7 @@ void FlowGraphManager::TaskRemoved(TaskID_t task_id) {
 }
 
 void FlowGraphManager::TaskScheduled(TaskID_t task_id, ResourceID_t res_id) {
+  LOG(INFO) << "DEBUG: TaskScheduled: " << task_id << ", " << res_id;
   FlowGraphNode* task_node = NodeForTaskID(task_id);
   CHECK_NOTNULL(task_node);
   task_node->type_ = FlowNodeType::SCHEDULED_TASK;
@@ -716,11 +722,14 @@ void FlowGraphManager::UpdateArcsForScheduledTask(FlowGraphNode* task_node,
                                                   FlowGraphNode* res_node) {
   CHECK_NOTNULL(task_node);
   CHECK_NOTNULL(res_node);
+  LOG(INFO) << "DEBUG: UpdateArcsForScheduledTask for " << task_node->id_;
   if (FLAGS_preemption) {
+    LOG(INFO) << "DEBUG: UpdateArcsForScheduledTask now: Insdie FLAGS_preemption";
     // We do not remove any old arcs. We only add/change a running arc to
     // the resource.
     ArcDescriptor arc_descriptor =
       cost_model_->TaskContinuation(task_node->td_ptr_->uid());
+    LOG(INFO) << "DEBUG: UpdateArcsForScheduledTask now: continuation cost: " << arc_descriptor.cost_;
     FlowGraphArc* running_arc =
       FindPtrOrNull(task_to_running_arc_, task_node->td_ptr_->uid());
     if (running_arc) {
@@ -742,6 +751,7 @@ void FlowGraphManager::UpdateArcsForScheduledTask(FlowGraphNode* task_node,
     }
     UpdateRunningTaskToUnscheduledAggArc(task_node);
   } else {
+
     PinTaskToNode(task_node, res_node);
   }
 }
@@ -808,6 +818,7 @@ void FlowGraphManager::UpdateEquivToEquivArcs(
       if (!pref_ec_node) {
         pref_ec_node = AddEquivClassNode(pref_ec_id);
       }
+
       ArcDescriptor arc_descriptor =
         cost_model_->EquivClassToEquivClass(ec_node->ec_id_, pref_ec_id);
       FlowGraphArc* pref_ec_arc =
@@ -1088,6 +1099,7 @@ void FlowGraphManager::UpdateRunningTaskNode(
     queue<TDOrNodeWrapper*>* node_queue,
     unordered_set<uint64_t>* marked_nodes) {
   CHECK_NOTNULL(task_node);
+  LOG(INFO) << "DEBUG: UpdateRunningTaskNode for " << task_node->id_;
   FlowGraphArc* running_arc = FindPtrOrNull(task_to_running_arc_,
                                             task_node->td_ptr_->uid());
   CHECK_NOTNULL(running_arc);
@@ -1120,6 +1132,7 @@ void FlowGraphManager::UpdateRunningTaskToUnscheduledAggArc(
   CHECK_NOTNULL(unsched_arc);
   ArcDescriptor arc_descriptor =
     cost_model_->TaskPreemption(task_node->td_ptr_->uid());
+  LOG(INFO) << "DEBUG: UpdateRunningTaskToUnscheduledAggArc: TaskPreemption() : " << arc_descriptor.cost_;
   graph_change_manager_->ChangeArc(
       unsched_arc, arc_descriptor.min_flow_, arc_descriptor.capacity_,
       arc_descriptor.cost_, CHG_ARC_TO_UNSCHED,

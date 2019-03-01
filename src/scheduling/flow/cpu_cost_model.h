@@ -18,8 +18,8 @@
  * permissions and limitations under the License.
  */
 
-#ifndef FIRMAMENT_SCHEDULING_NET_COST_MODEL_H
-#define FIRMAMENT_SCHEDULING_NET_COST_MODEL_H
+#ifndef FIRMAMENT_SCHEDULING_CPU_COST_MODEL_H
+#define FIRMAMENT_SCHEDULING_CPU_COST_MODEL_H
 
 #include <set>
 #include <string>
@@ -32,12 +32,14 @@
 #include "scheduling/common.h"
 #include "scheduling/knowledge_base.h"
 #include "scheduling/flow/cost_model_interface.h"
+#include "scheduling/flow/coco_cost_model.h"
 
 namespace firmament {
 
-class NetCostModel : public CostModelInterface {
+class CpuCostModel : public CostModelInterface {
  public:
-  NetCostModel(shared_ptr<ResourceMap_t> resource_map,
+  CpuCostModel(shared_ptr<ResourceMap_t> resource_map,
+               //shared_ptr<JobMap_t> job_map,
                shared_ptr<TaskMap_t> task_map,
                shared_ptr<KnowledgeBase> knowledge_base);
   // Costs pertaining to leaving tasks unscheduled
@@ -67,11 +69,13 @@ class NetCostModel : public CostModelInterface {
   void RemoveMachine(ResourceID_t res_id);
   void RemoveTask(TaskID_t task_id);
   FlowGraphNode* GatherStats(FlowGraphNode* accumulator, FlowGraphNode* other);
+  bool TaskFitsInResource(TaskID_t task_id, ResourceID_t res_id);
   void PrepareStats(FlowGraphNode* accumulator);
   FlowGraphNode* UpdateStats(FlowGraphNode* accumulator, FlowGraphNode* other);
 
  private:
   EquivClass_t GetMachineEC(const string& machine_name, uint64_t ec_index);
+  ResourceID_t MachineResIDForResource(ResourceID_t res_id);
   inline const TaskDescriptor& GetTask(TaskID_t task_id) {
     TaskDescriptor* td = FindPtrOrNull(*task_map_, task_id);
     CHECK_NOTNULL(td);
@@ -81,20 +85,27 @@ class NetCostModel : public CostModelInterface {
   shared_ptr<ResourceMap_t> resource_map_;
   // The task map used in the rest of the system
   shared_ptr<TaskMap_t> task_map_;
+  //shared_ptr<JobMap_t> job_map_;
   // A knowledge base instance that we will refer to for job runtime statistics.
   shared_ptr<KnowledgeBase> knowledge_base_;
   unordered_map<TaskID_t, uint64_t> task_rx_bw_requirement_;
   unordered_map<TaskID_t, float> task_cpu_cores_requirement_;
+  unordered_map<TaskID_t, CostVector_t> task_resource_requirement_;
   unordered_map<EquivClass_t, uint64_t> ec_rx_bw_requirement_;
   unordered_map<EquivClass_t, float> ec_cpu_cores_requirement_;
+  unordered_map<EquivClass_t, CostVector_t> ec_resource_requirement_;
   unordered_map<ResourceID_t, vector<EquivClass_t>, boost::hash<ResourceID_t>>
     ecs_for_machines_;
   unordered_map<EquivClass_t, ResourceID_t> ec_to_machine_;
   unordered_map<EquivClass_t, uint64_t> ec_to_index_;
   unordered_map<EquivClass_t, const RepeatedPtrField<LabelSelector>>
     ec_to_label_selectors;
+  set<TaskID_t> running_low_priority_tasks;
+  set<TaskID_t> running_high_priority_tasks;
+  unordered_map<TaskID_t, TaskID_t, boost::hash<TaskID_t>> preemptible_map;
+  unordered_map<ResourceID_t, float, boost::hash<ResourceID_t>> cumulative_available_cpu_cores;
 };
 
 }  // namespace firmament
 
-#endif  // FIRMAMENT_SCHEDULING_NET_COST_MODEL_H
+#endif  // FIRMAMENT_SCHEDULING_CPU_COST_MODEL_H

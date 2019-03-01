@@ -104,6 +104,7 @@ void EventDrivenScheduler::BindTaskToResource(TaskDescriptor* td_ptr,
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
   // Mark resource as busy and record task binding
   rd_ptr->set_state(ResourceDescriptor::RESOURCE_BUSY);
+  LOG(INFO) << "DEBUG: Task is being added to current runnning tasks";
   rd_ptr->add_current_running_tasks(task_id);
   CHECK(InsertIfNotPresent(&task_bindings_, task_id, res_id));
   resource_bindings_.insert(pair<ResourceID_t, TaskID_t>(res_id, task_id));
@@ -359,7 +360,7 @@ void EventDrivenScheduler::HandleTaskEviction(TaskDescriptor* td_ptr,
                                               ResourceDescriptor* rd_ptr) {
   boost::lock_guard<boost::recursive_mutex> lock(scheduling_lock_);
   ResourceID_t res_id = ResourceIDFromString(rd_ptr->uuid());
-  VLOG(1) << "Handling eviction of task " << td_ptr->uid()
+  LOG(INFO) << "Handling eviction of task " << td_ptr->uid()
           << ", freeing resource " << res_id;
   CHECK(UnbindTaskFromResource(td_ptr, res_id));
   // Record final report
@@ -473,8 +474,14 @@ void EventDrivenScheduler::HandleTaskRemoval(TaskDescriptor* td_ptr) {
   if (td_ptr->state() == TaskDescriptor::RUNNING) {
     was_running = true;
     KillRunningTask(td_ptr->uid(), TaskKillMessage::USER_ABORT);
+  } else if (td_ptr->state() == TaskDescriptor::RUNNABLE) {
+    JobID_t job_id = JobIDFromString(td_ptr->job_id());
+    TaskID_t task_id = td_ptr->uid();
+    runnable_tasks_[job_id].erase(task_id);
+    td_ptr->set_state(TaskDescriptor::ABORTED);
   } else {
     td_ptr->set_state(TaskDescriptor::ABORTED);
+
   }
   trace_generator_->TaskRemoved(td_ptr->uid(), was_running);
 }
@@ -510,6 +517,16 @@ void EventDrivenScheduler::KillRunningTask(
   if (!rid) {
     CHECK(UnbindTaskFromResource(td_ptr, *rid));
   }
+  //Remove task from current running task of resource
+  /*ResourceDescriptor* rd_ptr = rs_ptr->mutable_descriptor();
+  for (auto task_iter = rd_ptr->mutable_current_running_tasks()->begin();
+         task_iter != rd_ptr->mutable_current_running_tasks()->end();
+         ++task_iter) {
+    if (*task_iter == task_id) {
+        LOG(INFO) << "Erasing task from current_running_tasks = " << task_id;
+        rd_ptr->mutable_current_running_tasks()->erase(task_iter);
+    }
+  }*/
   trace_generator_->TaskKilled(task_id, rs_ptr->descriptor());
 }
 
