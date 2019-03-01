@@ -190,6 +190,17 @@ uint64_t FlowScheduler::ApplySchedulingDeltas(
     ResourceStatus* rs = FindPtrOrNull(*resource_map_, res_id);
     CHECK_NOTNULL(td_ptr);
     CHECK_NOTNULL(rs);
+
+    //resource stats simulation
+    ResourceStats resource_stats;
+    CpuStats* cpu_stats = resource_stats.add_cpus_stats();
+    bool have_sample =
+      knowledge_base_->GetLatestStatsForMachine(ResourceIDFromString(rs->mutable_topology_node()->mutable_parent_id(), &resource_stats);
+    if(have_sample) {
+          cpu_stats->set_cpu_allocatable(cpu_stats->cpu_allocatable() - td_ptr->resource_request().cpu_cores());
+          knowledge_base_->AddMachineSample(resource_stats);
+    }
+
     if (delta->type() == SchedulingDelta::NOOP) {
       // We should not get any NOOP deltas as they get filtered before.
       continue;
@@ -573,6 +584,24 @@ uint64_t FlowScheduler::RunSchedulingIteration(
     flow_graph_manager_->NodeBindingToSchedulingDeltas(it->first, it->second,
                                                        &task_bindings_,
                                                        &deltas);
+    //Update resource stats simulation
+/*    const FlowGraphNode& task_node = flow_graph_manager_->flow_graph_change_manager()->Node(it->first);
+    CHECK(task_node.IsTaskNode());
+    CHECK_NOTNULL(task_node.td_ptr_);
+    const FlowGraphNode& res_node = flow_graph_manager_->flow_graph_change_manager()->Node(it->second);
+    CHECK_NOTNULL(res_node.rd_ptr_);
+    ResourceStats resource_stats;
+    CpuStats* cpu_stats = resource_stats.add_cpus_stats();
+    ResourceStatus* rs_ptr = FindPtrOrNull(*resource_map_, res_node.resource_id_);
+    LOG(INFO) << "parent id=" << ResourceIDFromString(rs_ptr->mutable_topology_node()->mutable_parent_id());
+    bool have_sample =
+      knowledge_base_->GetLatestStatsForMachine(ResourceIDFromString(rs_ptr->mutable_topology_node()->mutable_parent_id(), &resource_stats);
+      const ResourceDescriptor& res = *res_node.rd_ptr_;
+      LOG(INFO) << "rd resource id=" << ResourceIDFromString(res.uuid());
+      if(have_sample) {
+          cpu_stats->set_cpu_allocatable(cpu_stats->cpu_allocatable() - task_node.td_ptr_->resource_request().cpu_cores());
+          knowledge_base_->AddMachineSample(resource_stats);
+    }*/
   }
   // Freeing the mappings because they're not used below.
   delete task_mappings;

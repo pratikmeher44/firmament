@@ -360,6 +360,8 @@ void SolverDispatcher::SolverConfiguration(const string& solver,
                       FLAGS_flowlessly_alpha_factor);
     } else if (solver == "cs2") {
       // Nothing to do
+    } else if (solver == "custom") {
+      // Nothing to do
     } else {
       CHECK(false) << "Unknown flow solver chosen!";
     }
@@ -398,6 +400,7 @@ multimap<uint64_t, uint64_t>* SolverDispatcher::GetMappings(
             node_id, FlowNodeType::ROOT_TASK) ||
         flow_graph_manager_->flow_graph_change_manager()->CheckNodeType(
             node_id, FlowNodeType::UNSCHEDULED_TASK) ||
+        flow_graph_manager_->flow_graph_change_manager()->CheckNodeType(
         flow_graph_manager_->flow_graph_change_manager()->CheckNodeType(
             node_id, FlowNodeType::SCHEDULED_TASK)) {
       // It's a task node.
